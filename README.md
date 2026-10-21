@@ -109,6 +109,3 @@ npm start
 
 Runs the full stack production server on port 5173.
 
----
-
-
