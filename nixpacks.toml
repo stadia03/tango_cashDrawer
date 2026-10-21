@@ -3,7 +3,7 @@
 nixPkgs = ["nodejs_22"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = ["npm install --ignore-engines"]
 
 [phases.build]
 cmds = ["npm run build"]
