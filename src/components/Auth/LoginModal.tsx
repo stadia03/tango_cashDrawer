@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Lock, AlertCircle, Delete, Shield } from 'lucide-react';
+import { Lock, AlertCircle, Shield } from 'lucide-react';
 import { verifyPassword, saveSession } from '../../services/auth.service';
 import { DEFAULT_STAFF_NAME } from '../../services/storage.service';
 import { HashGeneratorModal } from './HashGeneratorModal';
@@ -38,21 +38,21 @@ export function LoginModal({ onSuccess }: LoginModalProps) {
     }
   };
 
-  const handleKeyPress = (num: string) => {
-    setError(null);
-    if (password.length < 16) {
-      setPassword(password + num);
-    }
-  };
+  // const handleKeyPress = (num: string) => {
+  //   setError(null);
+  //   if (password.length < 16) {
+  //     setPassword(password + num);
+  //   }
+  // };
 
-  const handleBackspace = () => {
-    setPassword(prev => prev.slice(0, -1));
-  };
+  // const handleBackspace = () => {
+  //   setPassword(prev => prev.slice(0, -1));
+  // };
 
-  const handleClear = () => {
-    setPassword('');
-    setError(null);
-  };
+  // const handleClear = () => {
+  //   setPassword('');
+  //   setError(null);
+  // };
 
   return (
     <>
