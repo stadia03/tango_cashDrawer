@@ -95,7 +95,7 @@ export function LoginModal({ onSuccess }: LoginModalProps) {
           </div>
 
           {/* Touch Numpad */}
-          <div className="grid grid-cols-3 gap-1.5 mb-3">
+          {/* <div className="grid grid-cols-3 gap-1.5 mb-3">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
               <button
                 key={num}
@@ -127,7 +127,7 @@ export function LoginModal({ onSuccess }: LoginModalProps) {
             >
               <Delete className="w-4 h-4" />
             </button>
-          </div>
+          </div> */}
 
           {/* Unlock Button */}
           <button
