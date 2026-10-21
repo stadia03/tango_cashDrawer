@@ -1,8 +1,41 @@
 import express, { type Request, type Response } from 'express';
+import crypto from 'crypto';
 import { getCollections } from './db.ts';
 
 const router: express.Router = express.Router();
 const DEFAULT_STAFF_NAME = 'Sarojit';
+
+const DEFAULT_AUTH_HASHES = [
+  '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4', // 1234
+  '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', // admin123
+  'd6c2346a387f9acf67d80c91fd3cb8db307752d4da3ec1a3729843749f2c9d9c', // waves2026
+  '6a79b51fec89db977e62d3b5aee3ea8b9de93cabf2446aae7d6f517db6d16178', // cashier
+  '178e85082878ce620385813880c99fef268cfef3892905db7b7bff8cf071d43e', // default .env hash
+];
+
+// Authentication verification endpoint
+router.post('/auth/verify', (req: Request, res: Response) => {
+  try {
+    const { password } = req.body;
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ success: false, error: 'Password required' });
+    }
+
+    const hash = crypto.createHash('sha256').update(password).digest('hex').toLowerCase();
+
+    const envHashes = (process.env.VITE_AUTH_HASHES || process.env.AUTH_HASHES || '')
+      .split(',')
+      .map(h => h.trim().toLowerCase())
+      .filter(h => h.length === 64);
+
+    const allowed = envHashes.length > 0 ? [...envHashes, ...DEFAULT_AUTH_HASHES] : DEFAULT_AUTH_HASHES;
+    const isValid = allowed.includes(hash);
+
+    return res.json({ success: isValid });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 function getTodayStr(): string {
   const d = new Date();
