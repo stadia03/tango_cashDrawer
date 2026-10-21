@@ -23,9 +23,12 @@ app.use('/api', apiRouter);
 // Serve static assets in production
 app.use(express.static(path.join(__dirname, 'dist')));
 
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) return next();
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+// Fallback to index.html for SPA client-side routing
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    return res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  }
+  next();
 });
 
 // Connect to MongoDB Atlas and start server
