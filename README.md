@@ -111,4 +111,4 @@ Runs the full stack production server on port 5173.
 
 ---
 
-> **Important Security Step**: Because credentials (`mongodb+srv://user:JwpBtCSy6cb3uHEM...`, CouchDB credentials, host IP `204.168.161.138`, and the auth hash) were previously pushed to git, they should be considered compromised. Rotate the MongoDB database user password in Atlas and the CouchDB user password immediately, and ensure `.env` is added to your `.gitignore`.
+
