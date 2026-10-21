@@ -31,8 +31,8 @@ app.get('*', (req, res, next) => {
 // Connect to MongoDB Atlas and start server
 getDb()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Waves Cash Drawer server running on http://localhost:${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Waves Cash Drawer server running on http://0.0.0.0:${PORT}`);
     });
   })
   .catch(err => {
