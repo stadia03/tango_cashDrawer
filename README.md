@@ -51,25 +51,7 @@ npm install
 ```
 
 ### 2. Environment Configuration (`.env`)
-Configured in `.env`:
-```env
-# CouchDB Connection
-VITE_COUCHDB_URL=http://204.168.161.138:5984/
-VITE_COUCHDB_DB_NAME=payments
-VITE_COUCHDB_USER=tango
-VITE_COUCHDB_PASSWORD=...
-VITE_COUCHDB_LOCATION=Port Blair
-VITE_COUCHDB_METHOD=Cash
 
-# Hotel Name
-VITE_HOTEL_NAME=Tango Hotel & Resorts - Port Blair
-
-# Static Password Hashes (Comma-separated SHA-256 hashes)
-VITE_AUTH_HASHES="178e85082878ce620385813880c99fef268cfef3892905db7b7bff8cf071d43e"
-
-# MongoDB Atlas
-MONGO_URL="mongodb+srv://user:JwpBtCSy6cb3uHEM@stadia.nksyopz.mongodb.net/portblair_cashdrawer?retryWrites=true&w=majority"
-```
 
 ### 3. Run Development Server
 ```bash
