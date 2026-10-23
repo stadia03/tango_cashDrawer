@@ -42,10 +42,8 @@ function matchesTargetDate(isoOrDateStr: string | null | undefined, targetDate: 
   try {
     const d = new Date(isoOrDateStr);
     if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      if (`${y}-${m}-${day}` === targetDate) return true;
+      const istDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+      if (istDate === targetDate) return true;
     }
   } catch {}
   return false;

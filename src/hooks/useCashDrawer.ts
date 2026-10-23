@@ -69,6 +69,7 @@ export function useCashDrawer() {
         errorMessage: result.errorMessage || null,
       });
     } catch (err: any) {
+      setPosPayments([]);
       setSyncStatus(prev => ({
         ...prev,
         state: 'error',
@@ -81,8 +82,15 @@ export function useCashDrawer() {
   const summary: CashDrawerSummary = useMemo(() => {
     const openingBalance = drawer.openingBalance || 0;
     const posCashAmount = r2(
-      posPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
+      drawer.isLocked && drawer.posCashAmount !== undefined
+        ? drawer.posCashAmount
+        : posPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
     );
+    const posPaymentCount =
+      drawer.isLocked && drawer.posPaymentCount !== undefined
+        ? drawer.posPaymentCount
+        : posPayments.length;
+
     const extraCashIn = r2(
       transactions
         .filter(t => t.type === 'CASH_IN')
@@ -101,7 +109,7 @@ export function useCashDrawer() {
       date: selectedDate,
       openingBalance,
       posCashAmount,
-      posPaymentCount: posPayments.length,
+      posPaymentCount,
       extraCashIn,
       expensesOut,
       totalCashIn,
@@ -110,8 +118,9 @@ export function useCashDrawer() {
     };
   }, [drawer, transactions, posPayments, selectedDate]);
 
-  // When date changes, reload from MongoDB and fetch CouchDB
+  // When date changes, clear stale posPayments, reload from MongoDB and fetch CouchDB
   useEffect(() => {
+    setPosPayments([]);
     reloadData(selectedDate);
     syncPosPayments(selectedDate);
   }, [selectedDate, reloadData, syncPosPayments]);

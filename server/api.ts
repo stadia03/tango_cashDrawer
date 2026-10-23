@@ -38,11 +38,8 @@ router.post('/auth/verify', (req: Request, res: Response) => {
 });
 
 function getTodayStr(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  // Use Asia/Kolkata timezone (Port Blair / India)
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 }
 
 function isPastDate(dateStr: string): boolean {
@@ -53,14 +50,149 @@ function isToday(dateStr: string): boolean {
   return dateStr === getTodayStr();
 }
 
-function shiftDate(dateStr: string, delta: number): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + delta);
-  const ry = dt.getFullYear();
-  const rm = String(dt.getMonth() + 1).padStart(2, '0');
-  const rd = String(dt.getDate()).padStart(2, '0');
-  return `${ry}-${rm}-${rd}`;
+export async function fetchCouchDbPayments(dateStr: string): Promise<{ payments: any[]; totalCashAmount: number }> {
+  const rawUrl = (process.env.VITE_COUCHDB_URL || 'http://localhost:5984').replace(/\/+$/, '');
+  const dbName = (process.env.VITE_COUCHDB_DB_NAME || 'tango_payments').trim();
+  const user = process.env.VITE_COUCHDB_USER || '';
+  const pass = process.env.VITE_COUCHDB_PASSWORD || '';
+  const targetLocation = (process.env.VITE_COUCHDB_LOCATION || 'Port Blair').trim().toLowerCase();
+  const targetMethod = (process.env.VITE_COUCHDB_METHOD || 'Cash').trim().toLowerCase();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  if (user && pass) {
+    headers['Authorization'] = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+  }
+
+  let docs: any[] = [];
+  const findUrl = `${rawUrl}/${encodeURIComponent(dbName)}/_find`;
+
+  try {
+    const response = await fetch(findUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        selector: { type: 'payment' },
+        limit: 100000,
+      }),
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as any;
+      docs = data.docs || [];
+    } else {
+      throw new Error(`CouchDB _find returned status ${response.status}`);
+    }
+  } catch {
+    const allDocsUrl = `${rawUrl}/${encodeURIComponent(dbName)}/_all_docs?include_docs=true&limit=100000`;
+    const response2 = await fetch(allDocsUrl, { method: 'GET', headers });
+    if (response2.ok) {
+      const data = (await response2.json()) as any;
+      docs = (data.rows || []).map((r: any) => r.doc).filter(Boolean);
+    }
+  }
+
+  const filtered = docs.filter((doc: any) => {
+    if (!doc || doc.type !== 'payment') return false;
+    const method = (doc.method || '').trim().toLowerCase();
+    if (method !== targetMethod) return false;
+
+    const loc = (doc.location || '').trim().toLowerCase();
+    if (!loc.includes(targetLocation)) return false;
+
+    const pDate = doc.paymentDate ? String(doc.paymentDate) : '';
+    if (!pDate) return false;
+    if (pDate.slice(0, 10) === String(dateStr)) return true;
+    try {
+      const d = new Date(pDate);
+      if (!isNaN(d.getTime())) {
+        const istDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+        if (istDate === String(dateStr)) return true;
+      }
+    } catch {}
+    return false;
+  });
+
+  const totalCashAmount =
+    Math.round(filtered.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
+
+  filtered.sort((a: any, b: any) => (b.paymentDate || '').localeCompare(a.paymentDate || ''));
+
+  return { payments: filtered, totalCashAmount };
+}
+
+async function computeDrawerSummary(drawerDoc: any) {
+  const { transactions } = await getCollections();
+  const dateStr = String(drawerDoc.date);
+
+  const txns = await transactions.find({ date: dateStr }).toArray();
+  const extraCashIn =
+    Math.round(
+      txns.filter(t => t.type === 'CASH_IN').reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100
+    ) / 100;
+  const expensesOut =
+    Math.round(
+      txns.filter(t => t.type === 'CASH_OUT').reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100
+    ) / 100;
+
+  let posCashAmount = 0;
+  let posPaymentCount = 0;
+  if (drawerDoc.posCashAmount !== undefined && drawerDoc.posCashAmount !== null && drawerDoc.isLocked) {
+    posCashAmount = drawerDoc.posCashAmount;
+    posPaymentCount = drawerDoc.posPaymentCount || 0;
+  } else {
+    try {
+      const couch = await fetchCouchDbPayments(dateStr);
+      posCashAmount = couch.totalCashAmount;
+      posPaymentCount = couch.payments.length;
+    } catch (e) {
+      console.warn(`Could not fetch CouchDB payments for date ${dateStr}:`, e);
+      posCashAmount = drawerDoc.posCashAmount || 0;
+      posPaymentCount = drawerDoc.posPaymentCount || 0;
+    }
+  }
+
+  const opening = Number(drawerDoc.openingBalance) || 0;
+  const totalCashIn = Math.round((posCashAmount + extraCashIn) * 100) / 100;
+  const closingBalance = Math.round((opening + totalCashIn - expensesOut) * 100) / 100;
+
+  return {
+    closingBalance,
+    posCashAmount,
+    posPaymentCount,
+    extraCashIn,
+    expensesOut,
+    totalCashIn,
+  };
+}
+
+async function getPreviousDrawerClosing(targetDate: string): Promise<number> {
+  const { drawers } = await getCollections();
+  const prevDrawer = await drawers
+    .find({ date: { $lt: targetDate } })
+    .sort({ date: -1 })
+    .limit(1)
+    .next();
+
+  if (!prevDrawer) return 0;
+
+  if (prevDrawer.closingBalance !== undefined && prevDrawer.closingBalance !== null) {
+    return prevDrawer.closingBalance;
+  }
+
+  const summary = await computeDrawerSummary(prevDrawer);
+  await drawers.updateOne(
+    { _id: prevDrawer._id },
+    {
+      $set: {
+        ...summary,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  );
+  return summary.closingBalance;
 }
 
 // Health check
@@ -82,37 +214,49 @@ router.get('/health', async (_req: Request, res: Response) => {
 router.get('/drawers/:date', async (req: Request, res: Response) => {
   try {
     const date = String(req.params.date);
-    const { drawers } = await getCollections();
+    const { drawers, transactions } = await getCollections();
 
-    const drawer = await drawers.findOne({ date });
+    let drawer = await drawers.findOne({ date });
 
     if (drawer) {
       if (isPastDate(date) && !drawer.isLocked) {
+        const summary = await computeDrawerSummary(drawer);
+        const now = new Date().toISOString();
         await drawers.updateOne(
           { date },
           {
             $set: {
               isLocked: true,
               lockedAt: drawer.lockedAt || new Date(`${date}T23:59:59.000Z`).toISOString(),
-              updatedAt: new Date().toISOString(),
+              ...summary,
+              updatedAt: now,
             },
           }
         );
-        drawer.isLocked = true;
+        drawer = await drawers.findOne({ date });
+      } else if (!drawer.isLocked && !drawer.isOpeningBalanceManuallySet) {
+        // If drawer is active/unlocked and hasn't started transactions yet, ensure opening balance
+        // is in sync with the previous day's finalized closing balance
+        const txCount = await transactions.countDocuments({ date });
+        if (txCount === 0) {
+          const prevClosing = await getPreviousDrawerClosing(date);
+          if (drawer.openingBalance !== prevClosing) {
+            await drawers.updateOne(
+              { date },
+              { $set: { openingBalance: prevClosing, updatedAt: new Date().toISOString() } }
+            );
+            drawer.openingBalance = prevClosing;
+          }
+        }
       }
       return res.json(drawer);
     }
 
-    const prevDate = shiftDate(date, -1);
-    const prevDrawer = await drawers.findOne({ date: prevDate });
-    const initialOpening = prevDrawer
-      ? (prevDrawer.closingBalance ?? prevDrawer.openingBalance ?? 0)
-      : 0;
-
+    const initialOpening = await getPreviousDrawerClosing(date);
     const isPast = isPastDate(date);
     const now = new Date().toISOString();
 
-    const newDoc = {
+    let newDoc: any = {
       date,
       openingBalance: initialOpening,
       isLocked: isPast,
@@ -121,6 +265,11 @@ router.get('/drawers/:date', async (req: Request, res: Response) => {
       createdAt: now,
       updatedAt: now,
     };
+
+    if (isPast) {
+      const summary = await computeDrawerSummary(newDoc);
+      newDoc = { ...newDoc, ...summary };
+    }
 
     await drawers.insertOne(newDoc);
     res.json(newDoc);
@@ -147,7 +296,7 @@ router.put('/drawers/:date/opening-balance', async (req: Request, res: Response)
 
     await drawers.updateOne(
       { date },
-      { $set: { openingBalance: val, updatedAt: now } },
+      { $set: { openingBalance: val, isOpeningBalanceManuallySet: true, updatedAt: now } },
       { upsert: true }
     );
 
@@ -171,7 +320,7 @@ router.post('/drawers/:date/lock', async (req: Request, res: Response) => {
       expensesOut,
       totalCashIn,
     } = req.body;
-    const { drawers } = await getCollections();
+    const { drawers, transactions } = await getCollections();
     const now = new Date().toISOString();
 
     const updateFields: Record<string, any> = {
@@ -205,6 +354,34 @@ router.post('/drawers/:date/lock', async (req: Request, res: Response) => {
       { $set: updateFields },
       { upsert: true }
     );
+
+    // Propagate closing balance to the next unlocked drawer if it exists and hasn't started transactions
+    if (updateFields.closingBalance !== undefined) {
+      const nextDrawer = await drawers
+        .find({ date: { $gt: date } })
+        .sort({ date: 1 })
+        .limit(1)
+        .next();
+
+      if (
+        nextDrawer &&
+        !nextDrawer.isLocked &&
+        !nextDrawer.isOpeningBalanceManuallySet
+      ) {
+        const nextTxnCount = await transactions.countDocuments({ date: nextDrawer.date });
+        if (nextTxnCount === 0) {
+          await drawers.updateOne(
+            { _id: nextDrawer._id },
+            {
+              $set: {
+                openingBalance: updateFields.closingBalance,
+                updatedAt: now,
+              },
+            }
+          );
+        }
+      }
+    }
 
     const updated = await drawers.findOne({ date });
     res.json(updated);
@@ -398,81 +575,8 @@ router.get('/couchdb-payments', async (req: Request, res: Response) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: 'date is required' });
 
-    const rawUrl = (process.env.VITE_COUCHDB_URL || 'http://localhost:5984').replace(/\/+$/, '');
-    const dbName = (process.env.VITE_COUCHDB_DB_NAME || 'tango_payments').trim();
-    const user = process.env.VITE_COUCHDB_USER || '';
-    const pass = process.env.VITE_COUCHDB_PASSWORD || '';
-    const targetLocation = (process.env.VITE_COUCHDB_LOCATION || 'Port Blair').trim().toLowerCase();
-    const targetMethod = (process.env.VITE_COUCHDB_METHOD || 'Cash').trim().toLowerCase();
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    };
-    if (user && pass) {
-      headers['Authorization'] = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-    }
-
-    let docs: any[] = [];
-    const findUrl = `${rawUrl}/${encodeURIComponent(dbName)}/_find`;
-
-    try {
-      const response = await fetch(findUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          selector: { type: 'payment' },
-          limit: 100000,
-        }),
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as any;
-        docs = data.docs || [];
-      } else {
-        throw new Error(`CouchDB _find returned status ${response.status}`);
-      }
-    } catch {
-      const allDocsUrl = `${rawUrl}/${encodeURIComponent(dbName)}/_all_docs?include_docs=true&limit=100000`;
-      const response2 = await fetch(allDocsUrl, { method: 'GET', headers });
-      if (response2.ok) {
-        const data = (await response2.json()) as any;
-        docs = (data.rows || []).map((r: any) => r.doc).filter(Boolean);
-      }
-    }
-
-    const filtered = docs.filter((doc: any) => {
-      if (!doc || doc.type !== 'payment') return false;
-      const method = (doc.method || '').trim().toLowerCase();
-      if (method !== targetMethod) return false;
-
-      const loc = (doc.location || '').trim().toLowerCase();
-      if (!loc.includes(targetLocation)) return false;
-
-      const pDate = doc.paymentDate ? String(doc.paymentDate) : '';
-      if (!pDate) return false;
-      if (pDate.slice(0, 10) === String(date)) return true;
-      try {
-        const d = new Date(pDate);
-        if (!isNaN(d.getTime())) {
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          if (`${y}-${m}-${day}` === String(date)) return true;
-        }
-      } catch {}
-      return false;
-    });
-
-    const totalCashAmount =
-      Math.round(filtered.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
-
-    filtered.sort((a: any, b: any) => (b.paymentDate || '').localeCompare(a.paymentDate || ''));
-
-    res.json({
-      payments: filtered,
-      totalCashAmount,
-    });
+    const result = await fetchCouchDbPayments(String(date));
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message, payments: [], totalCashAmount: 0 });
   }
